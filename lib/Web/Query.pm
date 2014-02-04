@@ -14,6 +14,9 @@ our @EXPORT = qw/wq/;
 
 our $RESPONSE;
 
+use constant SLEEP_SEC => 1;
+my $COUNT = 0;
+
 sub wq { Web::Query->new(@_) }
 
 our $UserAgent = LWP::UserAgent->new();
@@ -28,7 +31,7 @@ sub _build_tree {
     my $tree = HTML::TreeBuilder::XPath->new();
     $tree->ignore_unknown(0);
     $tree->store_comments(1);
-    $tree;    
+    $tree;
 }
 
 sub new {
@@ -37,6 +40,11 @@ sub new {
     my $self = $class->_resolve_new($stuff);
 
     $self->{indent} = $options->{indent} if $options->{indent};
+
+    if (++$COUNT > 10) {
+        sleep(SLEEP_SEC);
+        $COUNT = 0;
+    }
 
     return $self;
 }
@@ -47,15 +55,15 @@ sub _resolve_new {
     if (blessed $stuff) {
         if ($stuff->isa('HTML::Element')) {
             return $class->new_from_element([$stuff]);
-        } 
-        
+        }
+
         if ($stuff->isa('URI')) {
             return $class->new_from_url($stuff->as_string);
-        } 
-        
+        }
+
         if ($stuff->isa($class)) {
             return $class->new_from_element($stuff->{trees});
-        } 
+        }
 
         die "Unknown source type: $stuff";
     }
@@ -146,24 +154,24 @@ sub eq {
 
 sub find {
     my ($self, $selector) = @_;
-    
-    my $xpath = selector_to_xpath($selector, root => './');    
+
+    my $xpath = selector_to_xpath($selector, root => './');
     my @new = map { $_->findnodes($xpath) } @{$self->{trees}};
-    
+
     return (ref $self || $self)->new_from_element(\@new, $self);
 }
 
 sub contents {
     my ($self, $selector) = @_;
-    
+
     my @new = map { $_->content_list } @{$self->{trees}};
-    
+
     if ($selector) {
         my $xpath = selector_to_xpath($selector);
-        @new = grep { $_->matches($xpath) } @new;        
+        @new = grep { $_->matches($xpath) } @new;
     }
-    
-    return (ref $self || $self)->new_from_element(\@new, $self);    
+
+    return (ref $self || $self)->new_from_element(\@new, $self);
 }
 
 sub as_html {
@@ -177,25 +185,25 @@ sub as_html {
 
 sub html {
     my $self = shift;
-    
+
     if (@_) {
-        map { 
-            $_->delete_content; 
+        map {
+            $_->delete_content;
             my $tree = $self->_build_tree;
             $tree->parse_content($_[0]);
             $_->push_content($tree->disembowel);
         } @{$self->{trees}};
         return $self;
-    } 
+    }
 
     my @html;
     for my $t ( @{$self->{trees}} ) {
-        push @html, join '', map { 
-            ref $_ ? $_->as_HTML( q{&<>'"}, $self->{indent}, {}) 
+        push @html, join '', map {
+            ref $_ ? $_->as_HTML( q{&<>'"}, $self->{indent}, {})
                    : encode_entities($_)
         } $t->content_list;
     }
-    
+
     return wantarray ? @html : $html[0];
 }
 
@@ -228,20 +236,20 @@ sub each {
 
 sub map {
     my ($self, $code) = @_;
-    my $i = 0; 
+    my $i = 0;
     return +[map {
         my $tree = $_;
         local $_ = (ref $self || $self)->new($tree);
         $code->($i++, $_);
     } @{$self->{trees}}];
-}   
+}
 
 sub filter {
     my $self = shift;
 
     if (ref($_[0]) eq 'CODE') {
         my $code = $_[0];
-        my $i = 0; 
+        my $i = 0;
         $self->{trees} = +[grep {
             my $tree = $_;
             local $_ = (ref $self || $self)->new($tree);
@@ -251,7 +259,7 @@ sub filter {
 
     } else {
         my $xpath = selector_to_xpath($_[0]);
-        my @new = grep { $_->matches($xpath) } @{$self->{trees}};        
+        my @new = grep { $_->matches($xpath) } @{$self->{trees}};
         return (ref $self || $self)->new_from_element(\@new, $self);
     }
 }
@@ -259,19 +267,19 @@ sub filter {
 sub remove {
     my $self = shift;
     my $before = $self->end;
-    
+
     while (defined $before) {
         @{$before->{trees}} = grep {
-            my $el = $_;            
-            not grep { refaddr($el) == refaddr($_) } @{$self->{trees}};            
+            my $el = $_;
+            not grep { refaddr($el) == refaddr($_) } @{$self->{trees}};
         } @{$before->{trees}};
 
         $before = $before->end;
     }
-    
+
     $_->delete for @{$self->{trees}};
     @{$self->{trees}} = ();
-    
+
     $self;
 }
 
@@ -284,7 +292,7 @@ sub replace_with {
 
         if ( ref $rep eq 'CODE' ) {
             local $_ = (ref $self || $self)->new($node);
-            $rep = $rep->( $i++ => $_ ); 
+            $rep = $rep->( $i++ => $_ );
         }
 
         $rep = (ref $self || $self)->new_from_html( $rep )
@@ -304,97 +312,97 @@ sub replace_with {
 sub append {
     my ($self, $stuff) = @_;
     $stuff = (ref $self || $self)->new($stuff);
-    
+
     foreach my $t (@{$self->{trees}}) {
         $t->push_content($_) for ref($t)->clone_list(@{$stuff->{trees}});
     }
-    
-    $self;    
+
+    $self;
 }
 
 sub prepend {
     my ($self, $stuff) = @_;
     $stuff = (ref $self || $self)->new($stuff);
-    
+
     foreach my $t (@{$self->{trees}}) {
         $t->unshift_content($_) for ref($t)->clone_list(@{$stuff->{trees}});
     }
-    
-    $self;    
+
+    $self;
 }
 
 
 sub before {
     my ($self, $stuff) = @_;
     $stuff = (ref $self || $self)->new($stuff);
-        
+
     foreach my $t (@{$self->{trees}}) {
         $t->preinsert(ref($t)->clone_list(@{$stuff->{trees}}));
     }
-    
-    $self;    
+
+    $self;
 }
 
 
 sub after {
     my ($self, $stuff) = @_;
     $stuff = (ref $self || $self)->new($stuff);
-        
+
     foreach my $t (@{$self->{trees}}) {
         $t->postinsert(ref($t)->clone_list(@{$stuff->{trees}}));
     }
-    
-    $self;    
+
+    $self;
 }
 
 
 sub insert_before {
     my ($self, $target) = @_;
-        
+
     foreach my $t (@{$target->{trees}}) {
         $t->preinsert(ref($t)->clone_list(@{$self->{trees}}));
     }
-    
-    $self;    
+
+    $self;
 }
 
 sub insert_after {
     my ($self, $target) = @_;
-        
+
     foreach my $t (@{$target->{trees}}) {
         $t->postinsert(ref($t)->clone_list(@{$self->{trees}}));
     }
-    
-    $self;    
+
+    $self;
 }
 
 sub detach {
     my ($self) = @_;
     $_->detach for @{$self->{trees}};
-    $self;    
+    $self;
 }
 
 sub add_class {
-    my ($self, $class) = @_;    
-            
+    my ($self, $class) = @_;
+
     for (my $i = 0; $i < @{$self->{trees}}; $i++) {
-        my $t = $self->{trees}->[$i];        
+        my $t = $self->{trees}->[$i];
         my $current_class = $t->attr('class') || '';
-        
+
         my $classes = ref $class eq 'CODE' ? $class->($i, $current_class, $t) : $class;
         my @classes = split /\s+/, $classes;
-        
-        foreach (@classes) {            
-            $current_class .= " $_" unless $current_class =~ /(?:^|\s)$_(?:\s|$)/;     
+
+        foreach (@classes) {
+            $current_class .= " $_" unless $current_class =~ /(?:^|\s)$_(?:\s|$)/;
         }
-                        
+
         $current_class =~ s/(?:^\s*|\s*$)//g;
         $current_class =~ s/\s\s+/ /g;
-        
+
         $t->attr('class', $current_class);
     }
-    
-    $self;    
+
+    $self;
 }
 
 
@@ -402,33 +410,33 @@ sub remove_class {
     my ($self, $class) = @_;
 
     for (my $i = 0; $i < @{$self->{trees}}; $i++) {
-        my $t = $self->{trees}->[$i];        
+        my $t = $self->{trees}->[$i];
         my $current_class = $t->attr('class');
-        next unless defined $current_class;        
-        
+        next unless defined $current_class;
+
         my $classes = ref $class eq 'CODE' ? $class->($i, $current_class, $t) : $class;
         my @remove_classes = split /\s+/, $classes;
         my @final = grep {
-            my $existing_class = $_;     
+            my $existing_class = $_;
             not grep { $existing_class eq $_} @remove_classes;
         } split /\s+/, $current_class;
-        
+
         $t->attr('class', join ' ', @final);
     }
-    
-    $self; 
-    
+
+    $self;
+
 }
 
 
 sub has_class {
     my ($self, $class) = @_;
-    
+
     foreach my $t (@{$self->{trees}}) {
         return 1 if $t->attr('class') =~ /(?:^|\s)$class(?:\s|$)/;
     }
-    
-    return;   
+
+    return;
 }
 
 sub clone {
@@ -440,20 +448,20 @@ sub clone {
 sub add {
     my ($self, @stuff) = @_;
     my @nodes;
-    
+
     # add(selector, context)
     if (@stuff == 2 && !ref $stuff[0] && $stuff[1]->isa('HTML::Element')) {
-        push @nodes, $stuff[1]->findnodes(selector_to_xpath($stuff[0]), root => './');        
+        push @nodes, $stuff[1]->findnodes(selector_to_xpath($stuff[0]), root => './');
     }
     else {
         # handle any combination of html string, element object and web::query object
-        push @nodes, map { 
+        push @nodes, map {
             $self->{need_delete} = 1 if $_->{need_delete};
             delete $_->{need_delete};
-            @{$_->{trees}}; 
-        } map { (ref $self || $self)->new($_) } @stuff;                
+            @{$_->{trees}};
+        } map { (ref $self || $self)->new($_) } @stuff;
     }
-    
+
     push @{$self->{trees}}, @nodes;
     $self;
 }
@@ -606,10 +614,10 @@ Reduce the elements to those that pass the function's test.
 Get the descendants of each element in the current set of matched elements, filtered by a selector.
 
     my $q2 = $q->find($selector); # $selector is a CSS3 selector.
-    
+
 B<NOTE> If you want to match the element itself, use L</filter>.
 
-B<INCOMPATIBLE CHANGE> 
+B<INCOMPATIBLE CHANGE>
 From v0.14 to v0.19 (inclusive) find() also matched the element itself, which is not jQuery compatible.
 You can achieve that result using C<filter()>, C<add()> and C<find()>:
 
@@ -645,7 +653,7 @@ Get the parent of each element in the current set of matched elements.
 Adds the specified class(es) to each of the set of matched elements.
 
     # add class 'foo' to <p> elements
-    wq('<div><p>foo</p><p>bar</p></div>')->find('p')->add_class('foo'); 
+    wq('<div><p>foo</p><p>bar</p></div>')->find('p')->add_class('foo');
 
 =head3 after
 
@@ -655,7 +663,7 @@ Insert content, specified by the parameter, after each element in the set of mat
                                ->after('<b>bar</b>')
                                ->end
                                ->as_html; # <div><p>foo</p><b>bar</b></div>
-    
+
 The content can be anything accepted by L</new>.
 
 =head3 append
@@ -663,12 +671,12 @@ The content can be anything accepted by L</new>.
 Insert content, specified by the parameter, to the end of each element in the set of matched elements.
 
     wq('<div></div>')->append('<p>foo</p>')->as_html; # <div><p>foo</p></div>
-    
+
 The content can be anything accepted by L</new>.
 
 =head3 as_html
 
-Return the elements associated with the object as strings. 
+Return the elements associated with the object as strings.
 If called in a scalar context, only return the string representation
 of the first element.
 
@@ -688,7 +696,7 @@ Insert content, specified by the parameter, before each element in the set of ma
                                ->before('<b>bar</b>')
                                ->end
                                ->as_html; # <div><b>bar</b><p>foo</p></div>
-    
+
 The content can be anything accepted by L</new>.
 
 =head3 clone
@@ -723,7 +731,7 @@ Insert every element in the set of matched elements after the target.
 
 =head3 prepend
 
-Insert content, specified by the parameter, to the beginning of each element in the set of matched elements. 
+Insert content, specified by the parameter, to the beginning of each element in the set of matched elements.
 
 =head3 remove
 
@@ -738,9 +746,9 @@ Remove a single class, multiple classes, or all classes from each element in the
 
 =head3 replace_with
 
-Replace the elements of the object with the provided replacement. 
-The replacement can be a string, a C<Web::Query> object or an 
-anonymous function. The anonymous function is passed the index of the current 
+Replace the elements of the object with the provided replacement.
+The replacement can be a string, a C<Web::Query> object or an
+anonymous function. The anonymous function is passed the index of the current
 node and the node itself (with is also localized as C<$_>).
 
     my $q = wq( '<p><b>Abra</b><i>cada</i><u>bra</u></p>' );
@@ -751,7 +759,7 @@ node and the node itself (with is also localized as C<$_>).
     $q->find('u')->replace_with($q->find('b'));
         # <p><i>cada</i><b>Abra</b></p>
 
-    $q->find('i')->replace_with(sub{ 
+    $q->find('i')->replace_with(sub{
         my $name = $_->text;
         return "<$name></$name>";
     });
@@ -772,7 +780,7 @@ Get/Set the text.
     my $text = $q->text(); # 1st matching element only
 
     $q->text('text');
-    
+
 If called in a scalar context, only return the string representation
 of the first element
 
